@@ -60,3 +60,6 @@ sysinfo.txt
 CMakeFiles/*
 *.cmake*
 x64*
+
+# CLion and other IntelliJ editors
+.idea
