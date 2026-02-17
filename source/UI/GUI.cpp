@@ -1,48 +1,10 @@
 #include "UI/GUI.h"
-// Data
-static UINT g_ResizeWidth = 0, g_ResizeHeight = 0;
 // to track which game was selected for generation
 static int selectedGame = 0;
 static bool showErrorPopup = false;
 static std::string errorLog;
 static bool requireCountryDetails = false;
-// Forward declare message handler from imgui_impl_win32.cpp
-extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd,
-                                                             UINT msg,
-                                                             WPARAM wParam,
-                                                             LPARAM lParam);
 
-// Win32 message handler
-// You can read the io.WantCaptureMouse, io.WantCaptureKeyboard flags to tell if
-// dear imgui wants to use your inputs.
-// - When io.WantCaptureMouse is true, do not dispatch mouse input data to your
-// main application, or clear/overwrite your copy of the mouse data.
-// - When io.WantCaptureKeyboard is true, do not dispatch keyboard input data to
-// your main application, or clear/overwrite your copy of the keyboard data.
-// Generally you may always pass all inputs to dear imgui, and hide them from
-// your application based on those two flags.
-// LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
-LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-  if (ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam))
-    return true;
-
-  switch (msg) {
-  case WM_SIZE:
-    if (wParam == SIZE_MINIMIZED)
-      return 0;
-    g_ResizeWidth = (UINT)LOWORD(lParam); // Queue resize
-    g_ResizeHeight = (UINT)HIWORD(lParam);
-    return 0;
-  case WM_SYSCOMMAND:
-    if ((wParam & 0xfff0) == SC_KEYMENU) // Disable ALT application menu
-      return 0;
-    break;
-  case WM_DESTROY:
-    ::PostQuitMessage(0);
-    return 0;
-  }
-  return ::DefWindowProcW(hWnd, msg, wParam, lParam);
-}
 // for state/country/strategic region editing
 static bool drawBorders = false;
 void GUI::recover() {
@@ -73,6 +35,7 @@ void GUI::genericWrapper() {
       ImGui::EndDisabled();
     ImGui::SameLine();
     showModuleGeneric(cfg);
+    // end genericwrapper
     ImGui::EndChild();
     // Draw a frame around the child region
     ImVec2 childMin = ImGui::GetItemRectMin();
@@ -112,33 +75,48 @@ void GUI::gameSpecificTabs(Fwg::Cfg &cfg) {
   }
 }
 
+bool setWindowIcon(GLFWwindow *window, const std::string &path) {
+  int width, height, channels;
+  unsigned char *pixels =
+      stbi_load(path.c_str(), &width, &height, &channels, 4);
+  if (!pixels) {
+    return false;
+  }
+
+  GLFWimage icon;
+  icon.width = width;
+  icon.height = height;
+  icon.pixels = pixels;
+
+  glfwSetWindowIcon(window, 1, &icon);
+
+  stbi_image_free(pixels);
+  return true;
+}
+
 int GUI::shiny(const pt::ptree &rpdConfRef,
                const std::string &configSubFolderRef,
                const std::string &usernameRef) {
 
   try {
-    //  Create application window
-    //  ImGui_ImplWin32_EnableDpiAwareness();
-    auto wc = initializeWindowClass();
+    CreateDeviceGL("RandomParadox 0.10.1", 0, 0);
 
-    HWND consoleWindow = GetConsoleWindow();
+    setWindowIcon(window, Fwg::Cfg::Values().workingDirectory +
+                              "//resources//worldMap.png");
+    uiUtils->setupImGuiContextAndStyle();
+    ImGui_ImplGlfw_InitForOpenGL(window, true);
+    ImGui_ImplOpenGL3_Init("#version 450");
 
-    ::RegisterClassExW(&wc);
-    HWND hwnd = uiUtils->createAndConfigureWindow(wc, wc.lpszClassName,
-                                                  L"RandomParadox 0.9.3");
-    initializeGraphics(hwnd);
-    initializeImGui(hwnd);
-    auto &io = ImGui::GetIO();
+    glfwSetWindowUserPointer(window, this);
+    glfwSetDropCallback(
+        window, [](GLFWwindow *win, int count, const char **paths) {
+          auto *fwgui = reinterpret_cast<GUI *>(glfwGetWindowUserPointer(win));
+          fwgui->triggeredDrag = (count > 0);
+          fwgui->draggedFile = (count > 0) ? std::string(paths[count - 1]) : "";
+        });
 
-    ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
     auto &cfg = Fwg::Cfg::Values();
-    // Main loop
-    bool done = false;
-    //--- prior to main loop:
-    DragAcceptFiles(hwnd, TRUE);
-    uiUtils->primaryTexture = nullptr;
-    uiUtils->device = g_pd3dDevice;
-
+    auto &io = ImGui::GetIO();
     // rpx related
     this->rpdConf = rpdConfRef;
     this->configSubFolder = configSubFolderRef;
@@ -153,137 +131,162 @@ int GUI::shiny(const pt::ptree &rpdConfRef,
 
     init(cfg, *activeGenerator);
 
-    while (!done) {
-      try {
-        initDraggingPoll(done);
-        // Start the Dear ImGui frame
-        ImGui_ImplDX11_NewFrame();
-        ImGui_ImplWin32_NewFrame();
-        ImGui::NewFrame();
+    while (!glfwWindowShouldClose(window)) {
+      triggeredDrag = false;
+      glfwPollEvents();
+
+      ImGui_ImplOpenGL3_NewFrame();
+      ImGui_ImplGlfw_NewFrame();
+
+      ImGui::NewFrame();
+      {
+        ImGui::SetNextWindowPos({0, 0});
+        ImGui::SetNextWindowSize({io.DisplaySize.x, io.DisplaySize.y});
+        ImGui::Begin("RandomParadox");
         {
-          ImGui::SetNextWindowPos({0, 0});
-          ImGui::SetNextWindowSize({io.DisplaySize.x, io.DisplaySize.y});
-          ImGui::Begin("RandomParadox");
-          if (!validatedPaths) {
-            ImGui::TextColored({255, 0, 100, 255},
-                               "You need to validate paths successfully before "
-                               "being able to do anything else");
-          }
-          // observer checks for "Error"
-          // auto errors = observer.pollForMessage("Error");
-          // if (!errors.empty()) {
-          //   errorLog = errors;
-          //   showErrorPopup = true;
-          //   ImGui::OpenPopup("Error Log");
-          // }
+          // Push style to remove padding so we can place button in top-right
+          ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
 
-          if (ImGui::BeginPopupModal("Error Log", NULL,
-                                     ImGuiWindowFlags_AlwaysAutoResize)) {
-            ImGui::TextWrapped("%s", errorLog.c_str());
+          // Calculate top-right position for button
+          ImVec2 buttonSize = ImVec2(50, 30); // width x height
+          ImVec2 windowSize = ImGui::GetWindowSize();
+          ImGui::SetCursorPos(ImVec2(windowSize.x - buttonSize.x - 10, 20));
 
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
-
-            if (ImGui::Button("Close", ImVec2(120, 0))) {
-              ImGui::CloseCurrentPopup();
-              showErrorPopup = false;
-            }
-
-            ImGui::EndPopup();
+          if (ImGui::Button("Exit", buttonSize)) {
+            glfwSetWindowShouldClose(window, true); // trigger close
           }
 
-          ImGui::BeginChild("LeftContent",
-                            ImVec2(ImGui::GetContentRegionAvail().x * 0.4f,
-                                   ImGui::GetContentRegionAvail().y * 1.0f),
-                            false);
-          {
-            ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(78, 90, 204, 40));
-            // Create a child window for the left content
-            ImGui::BeginChild("SettingsContent",
-                              ImVec2(ImGui::GetContentRegionAvail().x * 1.0f,
-                                     ImGui::GetContentRegionAvail().y * 0.8f),
-                              false);
-            {
-              ImGui::SeparatorText(
-                  "Different Steps of the generation, usually go "
-                  "from left to right");
+          ImGui::PopStyleVar();
+        }
+        if (!validatedPaths) {
+          ImGui::TextColored({255, 0, 100, 255},
+                             "You need to validate paths successfully before "
+                             "being able to do anything else");
+        }
+        // observer checks for "Error"
+        // auto errors = observer.pollForMessage("Error");
+        // if (!errors.empty()) {
+        //   errorLog = errors;
+        //   showErrorPopup = true;
+        //   ImGui::OpenPopup("Error Log");
+        // }
 
-              if (Fwg::UI::Elements::BeginMainTabBar("Steps")) {
-                // Disable all inputs if computation is running
-                if (computationRunning) {
-                  ImGui::BeginDisabled();
-                }
-                showConfigure(cfg);
-                if (!validatedPaths)
-                  ImGui::BeginDisabled();
-                if (cfg.debugLevel == 9) {
-                  showModLoader(cfg);
-                }
-                defaultTabs(cfg, *activeGenerator);
-                automapAreas();
-                showCivilizationTab(cfg);
-                gameSpecificTabs(cfg);
-                auto ardaGen =
-                    std::static_pointer_cast<Arda::ArdaGen>(activeGenerator);
-                overview(cfg);
-                if (!validatedPaths)
-                  ImGui::EndDisabled();
-                // Re-enable inputs if computation is running
-                if (computationRunning && !computationStarted) {
-                  ImGui::EndDisabled();
-                }
-                // Check if the computation is done
-                if (computationRunning &&
-                    computationFutureBool.wait_for(std::chrono::seconds(0)) ==
-                        std::future_status::ready) {
-                  computationRunning = false;
-                  uiUtils->resetTexture();
-                }
+        if (ImGui::BeginPopupModal("Error Log", NULL,
+                                   ImGuiWindowFlags_AlwaysAutoResize)) {
+          ImGui::TextWrapped("%s", errorLog.c_str());
 
-                if (computationRunning) {
-                  computationStarted = false;
-                  ImGui::Text("Working, please be patient");
-                } else {
-                  ImGui::Text("Ready!");
-                }
+          ImGui::Spacing();
+          ImGui::Separator();
+          ImGui::Spacing();
 
-                Fwg::UI::Elements::EndMainTabBar();
-              }
-
-              ImGui::PopStyleColor();
-              ImGui::EndChild();
-              // Draw a frame around the child region
-              ImVec2 childMin = ImGui::GetItemRectMin();
-              ImVec2 childMax = ImGui::GetItemRectMax();
-              ImGui::GetWindowDrawList()->AddRect(childMin, childMax,
-                                                  IM_COL32(100, 90, 180, 255),
-                                                  0.0f, 0, 2.0f);
-            }
-
-            genericWrapper();
-            logWrapper();
+          if (ImGui::Button("Close", ImVec2(120, 0))) {
+            ImGui::CloseCurrentPopup();
+            showErrorPopup = false;
           }
-          ImGui::SameLine();
-          imageWrapper(io);
-          ImGui::End();
 
-          if (uiUtils->showExtendedHelp) {
-            uiUtils->showAdvancedTextBox();
-          }
+          ImGui::EndPopup();
         }
 
-        // Rendering
-        uiUtils->renderImGui(g_pd3dDeviceContext, g_mainRenderTargetView,
-                             clear_color, g_pSwapChain);
-      } catch (std::exception e) {
-        Fwg::Utils::Logging::logLine("Error in GUI main loop: ", e.what());
+        ImGui::BeginChild("LeftContent",
+                          ImVec2(ImGui::GetContentRegionAvail().x * 0.4f,
+                                 ImGui::GetContentRegionAvail().y * 1.0f),
+                          false);
+        {
+          ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(78, 90, 204, 40));
+          // Create a child window for the left content
+          ImGui::BeginChild("SettingsContent",
+                            ImVec2(ImGui::GetContentRegionAvail().x * 1.0f,
+                                   ImGui::GetContentRegionAvail().y * 0.8f),
+                            false);
+          {
+            ImGui::SeparatorText(
+                "Different Steps of the generation, usually go "
+                "from left to right");
+
+            if (Fwg::UI::Elements::BeginMainTabBar("Steps")) {
+              // Disable all inputs if computation is running
+              if (computationRunning) {
+                ImGui::BeginDisabled();
+              }
+              showConfigure(cfg);
+              if (!validatedPaths)
+                ImGui::BeginDisabled();
+              if (cfg.debugLevel == 9) {
+                showModLoader(cfg);
+              }
+              defaultTabs(cfg, *activeGenerator);
+              automapAreas();
+              showCivilizationTab(cfg);
+              gameSpecificTabs(cfg);
+              auto ardaGen =
+                  std::static_pointer_cast<Arda::ArdaGen>(activeGenerator);
+              overview(cfg);
+              if (!validatedPaths)
+                ImGui::EndDisabled();
+              // Re-enable inputs if computation is running
+              if (computationRunning && !computationStarted) {
+                ImGui::EndDisabled();
+              }
+              // Check if the computation is done
+              if (computationRunning &&
+                  computationFutureBool.wait_for(std::chrono::seconds(0)) ==
+                      std::future_status::ready) {
+                computationRunning = false;
+                uiUtils->resetTexture();
+              }
+
+              if (computationRunning) {
+                computationStarted = false;
+                ImGui::Text("Working, please be patient");
+              } else {
+                ImGui::Text("Ready!");
+              }
+
+              Fwg::UI::Elements::EndMainTabBar();
+            }
+
+            ImGui::PopStyleColor();
+          }
+          // ends SettingsContent
+          ImGui::EndChild();
+          // Draw a frame around the child region
+          ImVec2 childMin = ImGui::GetItemRectMin();
+          ImVec2 childMax = ImGui::GetItemRectMax();
+          ImGui::GetWindowDrawList()->AddRect(
+              childMin, childMax, IM_COL32(100, 90, 180, 255), 0.0f, 0, 2.0f);
+
+          genericWrapper();
+          logWrapper();
+        }
+        // ends LeftContent
+        ImGui::EndChild();
+        ImGui::SameLine();
+        imageWrapper(io);
+        ImGui::End();
+
+        if (uiUtils->showExtendedHelp) {
+          uiUtils->showAdvancedTextBox();
+        }
       }
+
+      // Render
+      ImGui::Render();
+      int display_w, display_h;
+      glfwGetFramebufferSize(window, &display_w, &display_h);
+      glViewport(0, 0, display_w, display_h);
+      glClearColor(0.45f, 0.55f, 0.60f, 1.0f);
+      glClear(GL_COLOR_BUFFER_BIT);
+      ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+
+      glfwSwapBuffers(window);
     }
 
-    cleanup(hwnd, wc);
+    ImGui_ImplOpenGL3_Shutdown();
+    ImGui_ImplGlfw_Shutdown();
+    ImGui::DestroyContext();
+    CleanupDeviceGL();
     return 0;
-  } catch (std::exception e) {
+  } catch (std::exception &e) {
     Fwg::Utils::Logging::logLine("Error in GUI startup: ", e.what());
     return -1;
   }
@@ -313,7 +316,7 @@ void GUI::loadGameConfig(Fwg::Cfg &cfg) {
     Fwg::Parsing::replaceInStringStream(buffer, "//", "//");
 
     pt::read_json(buffer, hoi4Conf);
-  } catch (std::exception e) {
+  } catch (std::exception &e) {
     Fwg::Utils::Logging::logLine("Incorrect config \"RandomParadox.json\"");
     Fwg::Utils::Logging::logLine("You can try fixing it yourself. Error is: ",
                                  e.what());
@@ -547,7 +550,7 @@ void GUI::countryEdit(std::shared_ptr<Arda::ArdaGen> generator) {
     auto pix = clickEvents.front();
     clickEvents.pop();
     const auto colour = generator->provinceMap[pix.pixel];
-    if (generator->areaData.provinceColourMap.find(colour)) {
+    if (generator->areaData.provinceColourMap.contains(colour)) {
       const auto &prov = generator->areaData.provinceColourMap[colour];
       if (prov->regionID < generator->ardaRegions.size()) {
         auto &state = generator->ardaRegions[prov->regionID];
@@ -595,7 +598,8 @@ void GUI::countryEdit(std::shared_ptr<Arda::ArdaGen> generator) {
               }
             }
             requireCountryDetails = true;
-            generator->visualiseCountries(generator->countryMap);
+            generator->visualiseCountries(generator->countryMap,
+                                          generator->worldMap);
           }
         }
         ImGui::InputText("Country name", &selectedCountry->name);
@@ -611,7 +615,8 @@ void GUI::countryEdit(std::shared_ptr<Arda::ArdaGen> generator) {
                                   ImGuiColorEditFlags_HDR)) {
           selectedCountry->colour = Fwg::Gfx::Colour(
               color.x * 255.0, color.y * 255.0, color.z * 255.0);
-          generator->visualiseCountries(generator->countryMap);
+          generator->visualiseCountries(generator->countryMap,
+                                        generator->worldMap);
           uiUtils->resetTexture();
         }
         ImGui::PopItemWidth();
@@ -628,8 +633,8 @@ void GUI::countryEdit(std::shared_ptr<Arda::ArdaGen> generator) {
           modifiableState->owner = selectedCountry;
           selectedCountry->addRegion(modifiableState);
           requireCountryDetails = true;
-          generator->visualiseCountries(generator->countryMap,
-                                        modifiableState->ID);
+          generator->visualiseCountries(
+              generator->countryMap, generator->worldMap, modifiableState->ID);
           uiUtils->updateImage(0, generator->countryMap);
         }
       }
@@ -676,17 +681,16 @@ void GUI::countryEdit(std::shared_ptr<Arda::ArdaGen> generator) {
   ImGui::PopItemWidth();
 }
 
-static bool borderInput = false;
-
 int GUI::showCountryTab(Fwg::Cfg &cfg) {
   if (Fwg::UI::Elements::BeginMainTabItem("Countries")) {
     auto &generator = activeGenerator;
     if (uiUtils->tabSwitchEvent(true)) {
-      uiUtils->updateImage(
-          0, generator->visualiseCountries(generator->countryMap));
+      uiUtils->updateImage(0, generator->visualiseCountries(
+                                  generator->countryMap, generator->worldMap));
       uiUtils->updateImage(1, Fwg::Gfx::Image());
     }
 
+    uiUtils->showHelpTextBox("Countries");
     ImGui::Text(
         "Use auto generated country map or drop it in. You may also first "
         "generate a country map, then edit it in the Maps folder, and then "
@@ -698,21 +702,18 @@ int GUI::showCountryTab(Fwg::Cfg &cfg) {
     ImGui::Checkbox("Draw-borders", &drawBorders);
     ImGui::SameLine();
     ImGui::PushItemWidth(150.0f);
-    uiUtils->showHelpTextBox("Countries");
     ImGui::InputInt("Number of countries", &generator->ardaConfig.numCountries);
-    ImGui::Checkbox("Border input", &borderInput);
+    areaInputSelector(cfg);
     // ImGui::InputText("Path to country list: ",
     // &generator->countryMappingPath); ImGui::InputText("Path to state list:
     // ", &generator->regionMappingPath);
-    auto exportLocation = Fwg::Cfg::Values().mapsPath + "//exports//";
+    auto exportLocation = Fwg::Cfg::Values().mapsPath + "//areas//";
     if (ImGui::Button(("Export current state of countries and states to " +
                        exportLocation)
                           .c_str())) {
-      Arda::Countries::saveCountries(
-          generator->countries, Fwg::Cfg::Values().mapsPath + "//exports//",
-          Arda::Gfx::visualiseCountries(generator->countries));
+      Arda::Countries::saveCountries(generator->countries, exportLocation);
       Arda::Areas::saveRegions(
-          generator->ardaRegions, Fwg::Cfg::Values().mapsPath + "//exports//",
+          generator->ardaRegions, exportLocation,
           Arda::Gfx::visualiseRegions(generator->ardaRegions));
     }
     if (isRelevantModuleActive("hoi4")) {
@@ -757,7 +758,7 @@ int GUI::showCountryTab(Fwg::Cfg &cfg) {
 
             hoi4Gen->generateLogistics();
             hoi4Gen->generateCountrySpecifics();
-            hoi4Gen->generateFocusTrees();
+            // hoi4Gen->generateFocusTrees();
             hoi4Gen->distributeVictoryPoints();
             hoi4Gen->generatePositions();
             requireCountryDetails = false;
@@ -797,9 +798,12 @@ int GUI::showCountryTab(Fwg::Cfg &cfg) {
           Fwg::Utils::Logging::logLine(
               "Applying country input from file: ",
               Fwg::Utils::userFilter(draggedFile, cfg.username));
-          generator->countryMappingPath = draggedFile;
-          generator->applyCountryInput();
-          requireCountryDetails = true;
+          activeGenerator->loadCountries(
+              activeGenerator->ardaFactories.countryFactory, draggedFile);
+
+          // generator->countryMappingPath = draggedFile;
+          // generator->applyCountryInput();
+          // requireCountryDetails = true;
         } else {
           Fwg::Utils::Logging::logLine(
               "No valid file dragged in, the filename must either be "
@@ -811,23 +815,27 @@ int GUI::showCountryTab(Fwg::Cfg &cfg) {
           auto evaluationAreas =
               Fwg::UI::Utils::Masks::getLandmaskEvaluationAreas(
                   generator->terrainData.landMask);
-          if (!borderInput) {
-            activeGenerator->loadCountries(
-                generator->ardaFactories.countryFactory,
-                Fwg::IO::Reader::readGenericImageWithBorders(draggedFile, cfg,
-                                                             evaluationAreas));
+          if (cfg.areaInputMode == Fwg::Areas::AreaInputType::SOLID) {
+            auto img = Fwg::IO::Reader::readGenericImageWithBorders(
+                draggedFile, cfg, evaluationAreas);
+            if (img.size()) {
+              activeGenerator->loadCountries(
+                  generator->ardaFactories.countryFactory, img);
+            }
           } else {
             auto image = Fwg::IO::Reader::readGenericImage(draggedFile, cfg);
 
-            // detect all areas, give them unique colours
-            Fwg::Gfx::Filter::colouriseAreaBorderInputByBordersOnly(
-                image, evaluationAreas);
+            if (image.size()) {
+              // detect all areas, give them unique colours
+              Fwg::Gfx::Filter::colouriseAreaBorderInputByBordersOnly(
+                  image, evaluationAreas);
 
-            // now that we have modified the input image with colours filling
-            // the areas between borders, we can remove the borders
-            Fwg::Gfx::Filter::fillBlackPixelsByArea(image, evaluationAreas);
-            activeGenerator->loadCountries(
-                activeGenerator->ardaFactories.countryFactory, image);
+              // now that we have modified the input image with colours filling
+              // the areas between borders, we can remove the borders
+              Fwg::Gfx::Filter::fillBlackPixelsByArea(image, evaluationAreas);
+              activeGenerator->loadCountries(
+                  activeGenerator->ardaFactories.countryFactory, image);
+            }
           }
           uiUtils->resetTexture();
           return true;
@@ -893,24 +901,20 @@ int GUI::showStrategicRegionTab(Fwg::Cfg &cfg,
                                                   generator->superRegions));
       uiUtils->updateImage(1, Fwg::Gfx::Image());
     }
-    static int selectedStratRegionIndex = 0;
-    ImGui::SeparatorText(
-        "This generates strategic regions, they cannot be loaded");
     uiUtils->showHelpTextBox("Strategic Regions");
+    areaInputSelector(cfg);
+    static int selectedStratRegionIndex = 0;
     ImGui::PushItemWidth(200.0f);
     ImGui::InputFloat("<--Strategic region factor: ",
                       &generator->ardaConfig.superRegionFactor, 0.1f);
     ImGui::InputFloat("<--Strategic region mindistance factor: ",
                       &generator->ardaConfig.superRegionMinDistanceFactor);
-
-    ImGui::Checkbox("Border input", &borderInput);
     if (ImGui::Button("Generate strategic region template")) {
       Arda::Gfx::generateStrategicRegionTemplate(generator->areaData.provinces,
                                                  generator->areaData.regions);
     }
 
     if (ImGui::Button("Generate strategic regions")) {
-      // non-country stuff
       computationFutureBool = runAsync([&generator, &cfg, this]() {
         // non-country stuff
         generator->generateStrategicRegions(
@@ -929,34 +933,38 @@ int GUI::showStrategicRegionTab(Fwg::Cfg &cfg,
       });
     }
     if (triggeredDrag) {
-      if (!borderInput) {
-        activeGenerator->loadStrategicRegions(
-            activeGenerator->ardaFactories.superRegionFactory,
-            Fwg::IO::Reader::readGenericImageWithBorders(draggedFile, cfg, {}));
-      } else {
-        auto image = Fwg::IO::Reader::readGenericImage(draggedFile, cfg);
+      computationFutureBool = runAsync([&generator, &cfg, this]() {
+        if (cfg.areaInputMode == Fwg::Areas::AreaInputType::SOLID) {
+          activeGenerator->loadStrategicRegions(
+              activeGenerator->ardaFactories.superRegionFactory,
+              Fwg::IO::Reader::readGenericImageWithBorders(draggedFile, cfg,
+                                                           {}));
+        } else {
+          auto image = Fwg::IO::Reader::readGenericImage(draggedFile, cfg);
 
-        // detect all areas, give them unique colours
-        Fwg::Gfx::Filter::colouriseAreaBorderInputByBordersOnly(image, {});
+          // detect all areas, give them unique colours
+          Fwg::Gfx::Filter::colouriseAreaBorderInputByBordersOnly(image, {});
 
-        // now that we have modified the input image with colours filling
-        // the areas between borders, we can remove the borders
-        Fwg::Gfx::Filter::fillBlackPixelsByArea(image, {});
-        activeGenerator->loadStrategicRegions(
-            activeGenerator->ardaFactories.superRegionFactory, image);
-      }
+          // now that we have modified the input image with colours filling
+          // the areas between borders, we can remove the borders
+          Fwg::Gfx::Filter::fillBlackPixelsByArea(image, {});
+          activeGenerator->loadStrategicRegions(
+              activeGenerator->ardaFactories.superRegionFactory, image);
+        }
 
-      if (activeGameConfig.gameName == "Hearts of Iron IV") {
-        auto hoi4Gen = std::reinterpret_pointer_cast<Hoi4Gen, Arda::ArdaGen>(
-            activeGenerator);
-        hoi4Gen->generateWeather();
-      } else if (activeGameConfig.gameName == "Victoria 3") {
-        auto vic3Gen = std::reinterpret_pointer_cast<Vic3Gen, Arda::ArdaGen>(
-            activeGenerator);
-        // do stuff
-      }
-      triggeredDrag = false;
-      uiUtils->resetTexture();
+        if (activeGameConfig.gameName == "Hearts of Iron IV") {
+          auto hoi4Gen = std::reinterpret_pointer_cast<Hoi4Gen, Arda::ArdaGen>(
+              activeGenerator);
+          hoi4Gen->generateWeather();
+        } else if (activeGameConfig.gameName == "Victoria 3") {
+          auto vic3Gen = std::reinterpret_pointer_cast<Vic3Gen, Arda::ArdaGen>(
+              activeGenerator);
+          // do stuff
+        }
+        triggeredDrag = false;
+        uiUtils->resetTexture();
+        return true;
+      });
     }
 
     auto &clickEvents = uiUtils->clickEvents;
@@ -964,7 +972,7 @@ int GUI::showStrategicRegionTab(Fwg::Cfg &cfg,
       auto pix = clickEvents.front();
       clickEvents.pop();
       const auto &colour = generator->provinceMap[pix.pixel];
-      if (generator->areaData.provinceColourMap.find(colour)) {
+      if (generator->areaData.provinceColourMap.contains(colour)) {
         const auto &prov = generator->areaData.provinceColourMap[colour];
         auto &state = generator->ardaRegions[prov->regionID];
         auto &stratRegion = generator->superRegions[state->superRegionID];
@@ -1006,22 +1014,28 @@ int GUI::showStrategicRegionTab(Fwg::Cfg &cfg,
 
 // HOI4
 int GUI::showHoi4Configure(Fwg::Cfg &cfg, std::shared_ptr<Hoi4Gen> generator) {
+  ImGui::InputFloat("Starting Army Size Factor",
+                    &generator->modConfig.startingArmyStrengthFactor, 0.1);
+  ImGui::InputFloat("Starting Navy Size Factor",
+                    &generator->modConfig.startingNavyStrengthFactor, 0.1);
+  ImGui::InputFloat("Starting Airforce Size Factor",
+                    &generator->modConfig.startingAirforceStrengthFactor, 0.1);
   ImGui::InputDouble("resourceFactor", &generator->ardaConfig.resourceFactor,
                      0.1);
   ImGui::InputDouble("aluminiumFactor",
-                     &generator->modConfig.resources["aluminium"][2], 0.1);
-  ImGui::InputDouble("coalFactor", &generator->modConfig.resources["coal"][2],
+                     &generator->modConfig.resources["aluminium"][0], 0.1);
+  ImGui::InputDouble("coalFactor", &generator->modConfig.resources["coal"][0],
                      0.1);
   ImGui::InputDouble("chromiumFactor",
-                     &generator->modConfig.resources["chromium"][2], 0.1);
-  ImGui::InputDouble("oilFactor", &generator->modConfig.resources["oil"][2],
+                     &generator->modConfig.resources["chromium"][0], 0.1);
+  ImGui::InputDouble("oilFactor", &generator->modConfig.resources["oil"][0],
                      0.1);
   ImGui::InputDouble("rubberFactor",
-                     &generator->modConfig.resources["rubber"][2], 0.1);
-  ImGui::InputDouble("steelFactor", &generator->modConfig.resources["steel"][2],
+                     &generator->modConfig.resources["rubber"][0], 0.1);
+  ImGui::InputDouble("steelFactor", &generator->modConfig.resources["steel"][0],
                      0.1);
   ImGui::InputDouble("tungstenFactor",
-                     &generator->modConfig.resources["tungsten"][2], 0.1);
+                     &generator->modConfig.resources["tungsten"][0], 0.1);
   ImGui::InputDouble(
       "baseLightRainChance",
       &generator->modConfig.weatherChances["baseLightRainChance"], 0.1);
@@ -1085,7 +1099,7 @@ int GUI::showHoi4Finalise(Fwg::Cfg &cfg) {
             generator->writeTextFiles();
             generator->writeLocalisation();
             generator->printStatistics();
-          } catch (std::exception e) {
+          } catch (std::exception &e) {
             pathWarning(e);
           }
           return true;
@@ -1128,7 +1142,7 @@ int GUI::showHoi4Finalise(Fwg::Cfg &cfg) {
             generator->worldMap, generator->ardaData.civLayer,
             generator->pathcfg.gameModPath,
             "//map//terrain//colormap_rgb_cityemissivemask_a.dds",
-            DXGI_FORMAT_B8G8R8A8_UNORM, 2, false);
+            gli::format::FORMAT_BGR8_UNORM_PACK32, 2, false);
       }
 
     } else {
@@ -1214,7 +1228,7 @@ int GUI::showVic3Finalise(Fwg::Cfg &cfg) {
               generator->writeSplnet();
               generator->writeImages();
               generator->writeTextFiles();
-            } catch (std::exception e) {
+            } catch (std::exception &e) {
               pathWarning(e);
             }
             generator->printStatistics();

@@ -38,12 +38,12 @@ bool Generator::createPaths() { // prepare folder structure
     create_directory(pathcfg.gameModPath + "//common//trade_companies//");
     create_directory(pathcfg.gameModPath + "//common//trade_nodes//");
     return true;
-  } catch (std::exception e) {
+  } catch (std::exception& e) {
     std::string error = "Configured paths seem to be messed up, check Europa "
                         "Universalis IVModule.json\n";
     error += "You can try fixing it yourself. Error is:\n ";
     error += e.what();
-    throw(std::exception(error.c_str()));
+    throw(std::runtime_error(error.c_str()));
     return false;
   }
 }
@@ -67,7 +67,7 @@ void Generator::configureModGen(const std::string &configSubFolder,
     Fwg::Parsing::replaceInStringStream(buffer, "//", "//");
 
     pt::read_json(buffer, eu4Conf);
-  } catch (std::exception e) {
+  } catch (std::exception& e) {
     Fwg::Utils::Logging::logLine(
         "Incorrect config \"Europa Universalis IVModule.json\"");
     Fwg::Utils::Logging::logLine("You can try fixing it yourself. Error is: ",
@@ -130,7 +130,7 @@ void Generator::generateRegions(
       }
     }
   }
-  Bmp::save(eu4RegionBmp, Fwg::Cfg::Values().mapsPath + "//eu4Regions.bmp");
+  Png::save(eu4RegionBmp, Fwg::Cfg::Values().mapsPath + "//eu4Regions.png");
 }
 
 Fwg::Gfx::Image Generator::mapTerrain() {
@@ -165,11 +165,11 @@ void Generator::generate() {
     generateCountries(countryFactory);
 
     generateRegions(ardaRegions);
-  } catch (std::exception e) {
+  } catch (std::runtime_error e) {
     std::string error = "Error while generating the Eu4 Module.\n";
     error += "Error is: \n";
     error += e.what();
-    throw(std::exception(error.c_str()));
+    throw(std::runtime_error(error.c_str()));
   }
   try {
     // generate map files. Format must be converted and colours mapped to eu4
@@ -188,22 +188,22 @@ void Generator::generate() {
                                       "heightmap");
     std::vector<Fwg::Gfx::Image> seasonalColourmaps;
     genSeasons(Cfg::Values(), seasonalColourmaps);
-    formatConverter.dumpTerrainColourmap(seasonalColourmaps[0],
-                                         ardaData.civLayer, pathcfg.gameModPath,
-                                         "//map//terrain//colormap_spring.dds",
-                                         DXGI_FORMAT_B8G8R8A8_UNORM, 2, false);
-    formatConverter.dumpTerrainColourmap(seasonalColourmaps[1],
-                                         ardaData.civLayer, pathcfg.gameModPath,
-                                         "//map//terrain//colormap_summer.dds",
-                                         DXGI_FORMAT_B8G8R8A8_UNORM, 2, false);
-    formatConverter.dumpTerrainColourmap(seasonalColourmaps[2],
-                                         ardaData.civLayer, pathcfg.gameModPath,
-                                         "//map//terrain//colormap_autumn.dds",
-                                         DXGI_FORMAT_B8G8R8A8_UNORM, 2, false);
-    formatConverter.dumpTerrainColourmap(seasonalColourmaps[3],
-                                         ardaData.civLayer, pathcfg.gameModPath,
-                                         "//map//terrain//colormap_winter.dds",
-                                         DXGI_FORMAT_B8G8R8A8_UNORM, 2, false);
+    formatConverter.dumpTerrainColourmap(
+        seasonalColourmaps[0], ardaData.civLayer, pathcfg.gameModPath,
+        "//map//terrain//colormap_spring.dds",
+        gli::format::FORMAT_BGR8_UNORM_PACK32, 2, false);
+    formatConverter.dumpTerrainColourmap(
+        seasonalColourmaps[1], ardaData.civLayer, pathcfg.gameModPath,
+        "//map//terrain//colormap_summer.dds",
+        gli::format::FORMAT_BGR8_UNORM_PACK32, 2, false);
+    formatConverter.dumpTerrainColourmap(
+        seasonalColourmaps[2], ardaData.civLayer, pathcfg.gameModPath,
+        "//map//terrain//colormap_autumn.dds",
+        gli::format::FORMAT_BGR8_UNORM_PACK32, 2, false);
+    formatConverter.dumpTerrainColourmap(
+        seasonalColourmaps[3], ardaData.civLayer, pathcfg.gameModPath,
+        "//map//terrain//colormap_winter.dds",
+        gli::format::FORMAT_BGR8_UNORM_PACK32, 2, false);
     formatConverter.dumpDDSFiles(
         terrainData.detailedHeightMap,
         pathcfg.gameModPath + "//map//terrain//colormap_water", false, 2);
@@ -258,11 +258,11 @@ void Generator::generate() {
                ardaRegions, ardaProvinces, getEu4Regions());
       Fwg::Utils::Logging::logLine("Done with the eu4 export");
     }
-  } catch (std::exception e) {
+  } catch (std::exception& e) {
     std::string error = "Error while dumping and writing files.\n";
     error += "Error is: \n";
     error += e.what();
-    throw(std::exception(error.c_str()));
+    throw(std::runtime_error(error.c_str()));
   }
 }
 

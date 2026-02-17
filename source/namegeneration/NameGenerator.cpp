@@ -3,14 +3,14 @@
 namespace Rpx {
 namespace NameGeneration {
 
-std::string generateFactionName(const std::string &ideology,
+std::string generateFactionName(const Arda::Utils::Ideology &ideology,
                                 const std::string name,
                                 const std::string adjective,
                                 const Arda::Names::NameData &nameData) {
   return Detail::getRandomMapElement(ideology, nameData.factionNames);
 }
 
-std::string modifyWithIdeology(const std::string &ideology,
+std::string modifyWithIdeology(const Arda::Utils::Ideology &ideology,
                                const std::string name,
                                const std::string adjective,
                                const Arda::Names::NameData &nameData) {
@@ -46,7 +46,7 @@ Arda::Names::NameData prepare(const std::string &path,
         Fwg::Utils::Logging::logLine(
             "ERROR: Path to game does not exist, can't load forbidden tags");
       }
-    } catch (std::exception e) {
+    } catch (std::exception& e) {
       Fwg::Utils::Logging::logLine("ERROR: Path to game does not exist",
                                    e.what());
     }
@@ -59,23 +59,24 @@ Arda::Names::NameData prepare(const std::string &path,
 }
 namespace Detail {
 void readMap(const std::string path,
-             std::map<std::string, std::vector<std::string>> &map) {
+             std::map<Arda::Utils::Ideology, std::vector<std::string>> &map) {
   auto groupLines{Fwg::Parsing::getLines(path)};
   for (const auto &line : groupLines) {
     auto tokens = Fwg::Parsing::getTokens(line, ';');
     for (int i = 1; i < tokens.size(); i++)
-      map[tokens[0]].push_back(tokens[i]);
+      map[Arda::Utils::stringToIdeology.at(tokens[0])].push_back(tokens[i]);
   }
 }
-std::string
-getRandomMapElement(const std::string key,
-                    const std::map<std::string, std::vector<std::string>> map) {
+std::string getRandomMapElement(
+    const Arda::Utils::Ideology key,
+    const std::map<Arda::Utils::Ideology, std::vector<std::string>> map) {
   try {
     return Fwg::Utils::selectRandom(map.at(key));
-  } catch (std::exception e) {
-    auto str = "Error in Name Generation. Make sure the key: \"" + key +
+  } catch (std::exception& e) {
+    auto str = "Error in Name Generation. Make sure the key: \"" +
+               Arda::Utils::ideologyToString.at(key) +
                "\" of the namegroup or token group is present";
-    throw(std::exception(str.c_str()));
+    throw(std::runtime_error(str.c_str()));
   }
 }
 
